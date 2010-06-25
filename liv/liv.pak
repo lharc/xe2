@@ -1,0 +1,58 @@
+(
+ ; graphics
+ (:name "beam-horiz-0" :type :image :file "img/spore-beam-horiz-0.png")
+ (:name "beam-vert-0" :type :image :file "img/spore-beam-vert-0.png")
+ (:name "fire-0" :type :image :file "img/spore-fire-0.png")
+ (:name "box-0" :type :image :file "img/spore-box-0.png")
+ (:name "repel-0" :type :image :file "img/spore-repel-0.png")
+ (:name "repel-1" :type :image :file "img/spore-repel-1.png")
+ (:name "repel-2" :type :image :file "img/spore-repel-2.png")
+ (:name "repel-3" :type :image :file "img/spore-repel-3.png")
+ (:name "barrel-0" :type :image :file "img/spore-barrel-0.png")
+ (:name "energy-0" :type :image :file "img/spore-energy-0.png")
+ (:name "floor-0" :type :image :file "img/spore-floor-0.png")
+ (:name "generator-0" :type :image :file "img/spore-generator-0.png")
+ (:name "grid-0" :type :image :file "img/spore-grid-0.png")
+ (:name "mirror-0" :type :image :file "img/spore-mirror-0.png")
+ (:name "mirror-1" :type :image :file "img/spore-mirror-1.png")
+ (:name "player-0" :type :image :file "img/spore-player-0.png")
+ (:name "player-1" :type :image :file "img/spore-player-1.png")
+ (:name "player-2" :type :image :file "img/spore-player-2.png")
+ (:name "slime-0" :type :image :file "img/spore-slime-0.png")
+ (:name "spore-0" :type :image :file "img/spore-spore-0.png")
+ (:name "spore-1" :type :image :file "img/spore-spore-1.png")
+ (:name "spore-2" :type :image :file "img/spore-spore-2.png")
+ (:name "wallbox-0" :type :image :file "img/spore-wallbox-0.png")
+ (:name "wallbox-1" :type :image :file "img/spore-wallbox-1.png")
+ (:name "wallbox-2" :type :image :file "img/spore-wallbox-2.png")
+ (:name "wallbox-3" :type :image :file "img/spore-wallbox-3.png")
+ (:name "wall-horiz-0" :type :image :file "img/spore-wall-horiz-0.png")
+ (:name "wall-vert-0" :type :image :file "img/spore-wall-vert-0.png")
+ (:name "img/wall-edible-0" :type :image :file "img/wall-edible-0.png")
+ (:name "img/wall-edible-1" :type :image :file "img/wall-edible-1.png")
+ (:name "img/wall-edible-2" :type :image :file "img/wall-edible-2.png")
+ (:name "img/wall-edible-3" :type :image :file "img/wall-edible-3.png")
+ (:name "img/wall-edible-4" :type :image :file "img/wall-edible-4.png")
+ (:name "img/wall-edible-5" :type :image :file "img/wall-edible-5.png")
+ (:name "img/wall-edible-6" :type :image :file "img/wall-edible-6.png")
+ (:name "img/wall-edible-7" :type :image :file "img/wall-edible-7.png")
+
+ ;sounds
+ (:name "snd/fire-0"            :type :sample :file "snd/spore-fire-0.wav")
+ (:name "snd/fire-hit-0"        :type :sample :file "snd/fire-hit.wav")
+ (:name "snd/spore-do-damage-0" :type :sample :file "snd/spore-do-damage-0.wav")
+ (:name "snd/spore-do-damage-1" :type :sample :file "snd/spore-do-damage-1.wav")
+ (:name "snd/spore-do-damage-2" :type :sample :file "snd/spore-do-damage-2.wav")
+
+ ; code
+ (:name "liv" :type :lisp :file "liv.lisp" :properties (:autoload t))
+ (:name ".startup" :type :lisp :file "run.lisp")
+
+ ; misc
+ (:name "help-message" :type :text :file "README")
+
+ ; code
+ (:name ".startup" :type :lisp :file "run.lisp")
+
+ ; levels are loaded in objects.pak
+)
