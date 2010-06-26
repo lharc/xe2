@@ -20,7 +20,7 @@
 (defvar *pop* (make-array 256 :initial-element nil))
 (defvar *obj* (make-array (* *room-mx* *room-my*) :element-type 'fixnum :initial-element 0))
 
-(defmacro make-liv (x y) `(list ,x ,y nil 100 (random 3)))
+(defmacro make-liv (x y) `(list ,x ,y (make-net) 100 (random 3)))
 (defmacro liv-x  (liv) `(first  ,liv))
 (defmacro liv-y  (liv) `(second ,liv))
 (defmacro liv-net (liv) `(third  ,liv))
@@ -28,6 +28,56 @@
 (defmacro liv-art    (liv) `(fifth  ,liv))
 (defmacro set-obj (x y i) `(setf (aref *obj* (+ ,x (* ,y *room-mx*))) ,i))
 (defmacro get-obj (x y) `(aref *obj* (+ ,x (* ,y *room-mx*))))
+
+(defcell spore
+  (id   :initform nil)
+  (tile :initform (car (one-of '("spore-0" "spore-1" "spore-2"))))
+  (speed :initform (make-stat :base 3))
+  (movement-cost :initform (make-stat :base 20))
+  (categories :initform '(:actor :obstacle :spore)))
+
+(defun make-net ()
+  (let ((wo (make-array 40 :element-type 'single-float)))
+    (loop for i from 0 below 40 do
+      (setf (aref wo i) (* 0.9 (- (/ (random (* 2 8192)) 8192) 1f0))))
+    wo))
+
+(defun copy-net-random (dst src1 src2)
+  (loop for i from 0 below 40 do
+    (let ((f (case (random 2)
+               (0 (aref src1 i))
+               (1 (aref src2 i)))))
+      (setf f (+ f (* 0.1 (- (/ (random 8192) 8192) 0.5))))
+      (setf (aref dst i) f))))
+
+(defun run-net (net i0 i1 i2 i3)
+  (declare (single-float i0 i1 i2 i3) ((array single-float) net))
+  (macrolet ((anet (i)
+               `(aref net ,i))
+             (a* (i j)
+               `(* (aref net ,i) (aref net ,j)))
+             (nl (i)
+               `(coerce (/ 1 (1+ (exp (- (aref net ,i))))) 'single-float)))
+    ; layer 1
+    (setf (anet 4) (+ (* i0 (anet 0)) (* i1 (anet 1)) (* i2 (anet 2)) (* i3 (anet 3))))
+    (setf (anet 9) (+ (* i0 (anet 5)) (* i1 (anet 6)) (* i2 (anet 7)) (* i3 (anet 8))))
+    (setf (anet 14) (+ (* i0 (anet 10)) (* i1 (anet 11)) (* i2 (anet 12)) (* i3 (anet 13))))
+    (setf (anet 19) (+ (* i0 (anet 15)) (* i1 (anet 16)) (* i2 (anet 17)) (* i3 (anet 18))))
+    (setf (anet 4)  (nl 4))
+    (setf (anet 9)  (nl 9))
+    (setf (anet 14) (nl 14))
+    (setf (anet 19) (nl 19))
+    ; layer 2
+    (setf (anet 24) (+ (a* 4 20) (a* 9 21) (a* 14 22) (a* 19 23)))
+    (setf (anet 29) (+ (a* 4 25) (a* 9 26) (a* 14 27) (a* 19 28)))
+    (setf (anet 34) (+ (a* 4 30) (a* 9 31) (a* 14 32) (a* 19 33)))
+    (setf (anet 39) (+ (a* 4 35) (a* 9 36) (a* 14 37) (a* 19 38)))
+    (setf (anet 24) (nl 24))
+    (setf (anet 29) (nl 29))
+    (setf (anet 34) (nl 34))
+    (setf (anet 39) (nl 39))
+    ;(format t "~,2f ~,2f ~,2f ~,2f  :  ~,2f ~,2f ~,2f ~,2f~%" (anet 4) (anet 9) (anet 14) (anet 19) (anet 24) (anet 29) (anet 34) (anet 39))
+  ))
 
 (defmacro check-timer ((pos elapse) &body body)
   (let ((pos (if (numberp pos) `(aref *clocktimer* ,pos) pos)))
@@ -37,17 +87,70 @@
          ,@body))))
 
 (defun neighbours (x y)
-  (list (if (> x 0)         (get-obj (1- x) y) 0)
+  (list (if (> x 0)              (get-obj (1- x) y) 0)
         (if (< x (1- *room-mx*)) (get-obj (1+ x) y) 0)
-        (if (> y 0)         (get-obj x (1- y)) 0)
+        (if (> y 0)              (get-obj x (1- y)) 0)
         (if (< y (1- *room-my*)) (get-obj x (1+ y)) 0)))
+
+(defun transfer-energy (liv liv2)
+  (format t "kill: ~a~%" (= (liv-art liv) (liv-art liv2)))
+  (let ((am (/ (liv-energy liv2) 2)))
+    (when (> am 0)
+      (setf am (truncate am))
+      (incf (liv-energy liv) am)
+      (decf (liv-energy liv2) am))))
+
+(defun spawn (id liv)
+  (let ((spore (clone =spore=))
+        (x (liv-x liv))
+        (y (liv-y liv)))
+    (setf (field-value :tile spore) (ecase (liv-art liv)
+                                      (0 "spore-0")
+                                      (1 "spore-1")
+                                      (2 "spore-2")))
+    (setf (aref *pop* id) liv)
+    (setf (field-value :id spore) id)
+    (set-obj x y id)
+    [drop-cell *room* spore y x :exclusive t :probe t]))
+
+(defun breed (liv liv2)
+  (when (= (liv-art liv) (liv-art liv2))
+    (let ((en1 (truncate (/ (liv-energy liv) 2)))
+          (en2 (truncate (/ (liv-energy liv2) 2))))
+      (decf (liv-energy liv) en1)
+      (decf (liv-energy liv2) en2)
+      (format t "liv: ~a~%" (+ en1 en2))
+      (let ((x (liv-x liv))
+            (y (liv-y liv))
+            nx ny n)
+        (loop for (dx dy) in '((-1 0) (1 0) (0 -1) (0 1)) do
+          (setf nx (+ x dx))
+          (setf ny (+ y dy))
+          (if (< nx 0) (setf nx 0))
+          (if (< ny 0) (setf ny 0))
+          (if (>= nx *room-mx*) (setf nx (1- *room-mx*)))
+          (if (>= ny *room-my*) (setf ny (1- *room-my*)))
+          (when (= (get-obj nx ny) 0)
+            (loop for i from 1 below (length *pop*) do
+              (when (not (aref *pop* i))
+                (setf n i)
+                (return)))
+            (when n
+              (format t "born: objid=~a at: ~x,~x~%" n nx ny)
+              (let ((liv3 (make-liv nx ny)))
+                (setf (liv-art liv3) (liv-art liv))
+                (setf (liv-energy liv3) (+ en1 en2))
+                (copy-net-random (liv-net liv3) (liv-net liv) (liv-net liv2))
+                (spawn n liv3)))))))))
 
 (defun run-liv (liv i)
   (let* ((x (liv-x liv))
          (y (liv-y liv))
+         (art (liv-art liv))
+         (net (liv-net liv))
          (objid (get-obj x y))
-         (nx (+ (1- (random 3)) x))
-         (ny (+ (1- (random 3)) y))
+         (nx 0)
+         (ny 0)
          (nei (neighbours x y)))
     (format t "objid: ~a:~a, xy: ~a,~a~%" i objid x y)
     (assert (> objid 0))
@@ -57,23 +160,50 @@
       (set-obj x y 0)
       (setf (aref *pop* i) nil)
       (return-from run-liv))
-    (destructuring-bind (n s w e) nei
-      ; energy box
-      (when (or (= n -2) (= s -2) (= w -2) (= e -2))
-        (format t "~a: energy!~%" objid)
-        (incf (liv-energy liv) 20))
-
-      )
+    (destructuring-bind (w e n s) nei
+      (let ((eb 0f0) (rb 0f0) (ee 0f0) (fe 0f0))
+        (declare (single-float eb rb ee fe))
+        ; energy box
+        (when (or (= n -2) (= s -2) (= w -2) (= e -2))
+          (incf eb)
+          ;(format t "~a: energy!~%" objid)
+          (incf (liv-energy liv) 100))
+        (when (or (= n -1) (= s -1) (= w -1) (= e -1))
+          (incf rb))
+        (if (> w 0) (if (= (liv-art (aref *pop* w)) art) (incf fe) (incf ee)))
+        (if (> e 0) (if (= (liv-art (aref *pop* e)) art) (incf fe) (incf ee)))
+        (if (> n 0) (if (= (liv-art (aref *pop* n)) art) (incf fe) (incf ee)))
+        (if (> s 0) (if (= (liv-art (aref *pop* s)) art) (incf fe) (incf ee)))
+        (run-net net eb rb ee fe)
+        (if (> (aref net 24)  0.7) (setf nx 1))
+        (if (< (aref net 24)  0.3) (setf nx -1))
+        (if (> (aref net 29)  0.7) (setf ny 1))
+        (if (< (aref net 29)  0.3) (setf ny -1))
+        (when (> (aref net 34) 0.7)
+          (when (> w 0) (transfer-energy liv (aref *pop* w)))
+          (when (> e 0) (transfer-energy liv (aref *pop* e)))
+          (when (> n 0) (transfer-energy liv (aref *pop* n)))
+          (when (> s 0) (transfer-energy liv (aref *pop* s))))
+        (when (> (aref net 39) 0.7)
+          (when (> w 0) (breed liv (aref *pop* w)))
+          (when (> e 0) (breed liv (aref *pop* e)))
+          (when (> n 0) (breed liv (aref *pop* n)))
+          (when (> s 0) (breed liv (aref *pop* s))))
+        ;(format t "nx,ny: ~a,~a~%" nx ny)
+        ))
     ;(format t "obj: ~a~%" objid)
-    (when (and (> nx -1) (> ny -1)
-               (< nx *room-mx*)
-               (< ny *room-my*)
-               (= (get-obj nx ny) 0))
-      (set-obj x  y  0) ; mark the old position as free
-      (set-obj nx ny objid) ; store the objid at the new position
-      (format t "move: ~a:~a ~a,~a -> ~a,~a~%" i objid x y nx ny)
-      (setf (liv-x liv) nx
-            (liv-y liv) ny))))
+    (when (or (/= nx 0) (/= ny 0))
+      (setf nx (+ x nx))
+      (setf ny (+ y ny))
+      (when (and (> nx -1) (> ny -1)
+                 (< nx *room-mx*)
+                 (< ny *room-my*)
+                 (= (get-obj nx ny) 0))
+        (set-obj x  y  0) ; mark the old position as free
+        (set-obj nx ny objid) ; store the objid at the new position
+        ;(format t "move: ~a:~a ~a,~a -> ~a,~a~%" i objid x y nx ny)
+        (setf (liv-x liv) nx
+              (liv-y liv) ny)))))
 
 (defun run-world ()
   (format t "~a:~%" (get-internal-run-time))
@@ -82,18 +212,8 @@
       (let ((liv (aref *pop* i)))
         (if liv (run-liv liv i))))))
 
-(defcell slime-0
-  (tile :initform "slime-0"))
-
 (defcell floor 
   (tile :initform "floor-0"))
-
-(defcell spore
-  (id   :initform nil)
-  (tile :initform (car (one-of '("spore-0" "spore-1" "spore-2"))))
-  (speed :initform (make-stat :base 3))
-  (movement-cost :initform (make-stat :base 20))
-  (categories :initform '(:actor :obstacle :spore)))
 
 (define-method run spore ()
   (let* ((id (field-value :id self))
@@ -212,9 +332,9 @@
     ((format t "hit-spore-generator!~%")
      [die self])
     ((when (= (random 256) 0)
-       (let* ((x (field-value :column self))
-              (y (field-value :row self))
-              nx ny)
+       (let ((x (field-value :column self))
+             (y (field-value :row self))
+             nx ny n)
          (case (random 4)
            (0 (setf nx (1+ x)) (setf ny y))
            (1 (setf ny (1+ y)) (setf nx x))
@@ -226,23 +346,11 @@
          (if (>= ny *room-my*) (setf ny (1- *room-my*)))
          (when (= (get-obj nx ny) 0)
                  ;(not [category-at-p *world* ny nx '(:obstacle)])
-           (let ((spore (clone =spore=)) n)
-             (loop for i from 1 below (length *pop*) do
-               (when (not (aref *pop* i))
-                 (setf n i)
-                 (return)))
-             (when n
-               (let* ((liv (make-liv nx ny))
-                      (art (liv-art liv)))
-                 (setf (field-value :tile spore) (ecase art
-                                                   (0 "spore-0")
-                                                   (1 "spore-1")
-                                                   (2 "spore-2")))
-                 (setf (aref *pop* n) liv)
-                 (setf (field-value :id spore) n)
-                 (format t "xet-obj: objid=~a at: ~x,~x~%" n nx ny)
-                 (set-obj nx ny n)
-                 [drop-cell *room* spore ny nx :exclusive t :probe t]))))))))
+           (loop for i from 1 below (length *pop*) do
+             (when (not (aref *pop* i))
+               (setf n i)
+               (return)))
+           (if n (spawn n (make-liv nx ny))))))))
   (define-box (repel-0 "repel-0")
     ([die self])
     ())
@@ -440,7 +548,6 @@
 ;    [drop-cell *room* (clone =mirror-0=) 0 8]
 ;    [drop-cell *room* (clone =mirror-0=) 0 9]
 ;    [drop-cell *room* (clone =spore=) 0 10]
-;    [drop-cell *room* (clone =slime-0=) 0 13]
 ;    [drop-cell *room* (clone =wallbox-0=) 0 14]
 ;    [drop-cell *room* (clone =wallbox-1=) 0 15]
 ;    [drop-cell *room* (clone =wallbox-2=) 0 16]
