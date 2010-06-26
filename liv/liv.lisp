@@ -40,26 +40,32 @@
   (movement-cost :initform (make-stat :base 20))
   (categories :initform '(:actor :obstacle :spore)))
 
+(defcell floor (tile :initform "floor-0"))
+
 (defmacro fassert (form &rest msg)
   `(if (not ,form) (error "assertion failed for form: ~s data: ~a" ',form (format nil ,@msg))))
 
 (defun verify-pop-obj-integrity ()
-  (loop for i from 1 below (length *pop*) do
-    (let ((liv (aref *pop* i)))
-      (when liv
-        (assert (listp liv))
-        (let ((x (liv-x liv))
-              (y (liv-y liv)))
-          (let ((objid (get-obj x y)))
-            (assert (= objid i)))))))
-  (loop for n from 0 below (length *obj*) do
-    (let ((objid (aref *obj* n)))
-      (when (> objid 0)
-        (let ((liv (aref *pop* objid)))
-          (assert liv) (assert (listp liv))
+  (let ((cnta 0) (cntb 0))
+    (loop for i from 1 below (length *pop*) do
+      (let ((liv (aref *pop* i)))
+        (when liv
+          (incf cnta)
+          (assert (listp liv))
           (let ((x (liv-x liv))
                 (y (liv-y liv)))
-            (fassert (= n (+ x (* y *room-mx*))) "n=~a, x=~a, y=~a (~a) objid=~a" n x y (+ x (* y *room-mx*)) objid)))))))
+            (let ((objid (get-obj x y)))
+              (fassert (= objid i) "objid=~a /= i=~a" objid i))))))
+    (loop for n from 0 below (length *obj*) do
+      (let ((objid (aref *obj* n)))
+        (when (> objid 0)
+          (incf cntb)
+          (let ((liv (aref *pop* objid)))
+            (assert liv) (assert (listp liv))
+            (let ((x (liv-x liv))
+                  (y (liv-y liv)))
+              (fassert (= n (+ x (* y *room-mx*))) "n=~a, x=~a, y=~a (~a) objid=~a" n x y (+ x (* y *room-mx*)) objid))))))
+    (fassert (= cnta cntb) "cnta=~a /= cntb=~a" cnta cntb)))
 
 (defun make-net ()
   (let ((wo (make-array 64 :element-type 'single-float)))
@@ -238,7 +244,8 @@
         (set-obj nx ny objid) ; store the objid at the new position
         ;(format t "move: ~a:~a ~a,~a -> ~a,~a~%" i objid x y nx ny)
         (setf (liv-x liv) nx
-              (liv-y liv) ny)))))
+              (liv-y liv) ny)
+        (verify-pop-obj-integrity)))))
 
 (defun run-world ()
   (format t "**** ~a ****~%" (get-internal-run-time))
@@ -247,15 +254,15 @@
       (setf (aref *obj* i) 0)))
   (let ((x (field-value :column *player*))
         (y (field-value :row    *player*)))
-   (set-obj x y -3))
+    ; FIX: bug, player moves into busy position
+    ;(let ((objid (get-obj x y)))
+    ;  (fassert (= objid 0) "place ~a,~a is not empty" x y))
+    (if (= (get-obj x y) 0) (set-obj x y -3)))
   (let ((poplen (length *pop*)))
     (verify-pop-obj-integrity)
     (loop for i from 1 below poplen do
       (let ((liv (aref *pop* i)))
         (if liv (run-liv liv i))))))
-
-(defcell floor 
-  (tile :initform "floor-0"))
 
 (define-method run spore ()
   (let* ((id (field-value :id self))
@@ -587,24 +594,6 @@
   [drop-floor self]
   [drop-spore self]
 
-;    [drop-cell *room* (clone =beam-horiz-0=) 0 0]
-;    [drop-cell *room* (clone =beam-vert-0=) 0 1]
-;    [drop-cell *room* (clone =box-0=) 0 2]
-;    [drop-cell *room* (clone =repel-0=) 0 3]
-;    [drop-cell *room* (clone =barrel-0=) 0 4]
-;    [drop-cell *room* (clone =energy-0=) 0 5]
-;    [drop-cell *room* (clone =generator-0=) 0 6]
-;    [drop-cell *room* (clone =grid-0=) 0 7]
-;    [drop-cell *room* (clone =mirror-0=) 0 8]
-;    [drop-cell *room* (clone =mirror-0=) 0 9]
-;    [drop-cell *room* (clone =spore=) 0 10]
-;    [drop-cell *room* (clone =wallbox-0=) 0 14]
-;    [drop-cell *room* (clone =wallbox-1=) 0 15]
-;    [drop-cell *room* (clone =wallbox-2=) 0 16]
-;    [drop-cell *room* (clone =wallbox-3=) 0 17]
-;    [drop-cell *room* (clone =wall-horiz-0=) 0 18]
-;    [drop-cell *room* (clone =wall-vert-0=) 0 19]
-;    [drop-cell *room* (clone =img/wall-edible-0=) 0 20]
   ; create walls
 ;  (dotimes (i 20)
 ;    (let ((column (1+ (random *room-mx*)))
