@@ -22,6 +22,15 @@
 (defvar *pop* (make-array 256 :initial-element nil))
 (defvar *obj* (make-array (* *room-mx* *room-my*) :element-type 'fixnum :initial-element 0))
 (defvar *run-world* nil)
+; one-way lockless communication channels
+; FIX: create some macros and move out this functionally
+(defvar *create-spore-request* nil) ; create request isn't critical, ie lossy is fine
+(defvar *drop-spore-request-0* nil)
+(defvar *drop-spore-request-1* nil)
+(defvar *die-spore-request-0* nil)
+(defvar *die-spore-request-1* nil)
+(defvar *move-spore-request-0* nil)
+(defvar *move-spore-request-1* nil)
 
 (defmacro make-liv (x y) `(list ,x ,y (make-net) 100 (random 3) 0 0 0 nil))
 (defmacro liv-x  (liv) `(first  ,liv))
@@ -138,22 +147,36 @@
       (incf (liv-energy liv) am)
       (decf (liv-energy liv2) (ash am 2)))))
 
+(defun yield ()
+  (when (not *drop-spore-request-1*)
+    (setf *drop-spore-request-1* *drop-spore-request-0*)
+    (setf *drop-spore-request-0* nil))
+  (when (not *move-spore-request-1*)
+    (setf *move-spore-request-1* *move-spore-request-0*)
+    (setf *move-spore-request-0* nil))
+  (when (not *die-spore-request-1*)
+    (setf *die-spore-request-1* *die-spore-request-0*)
+    (setf *die-spore-request-0* nil))
+  )
+
 (defun spawn (id liv)
-  (let ((spore (clone =spore=))
+  (let (;(spore (clone =spore=))
         (x (liv-x liv))
         (y (liv-y liv))
-        (plague (get-plague-liv-flag liv)))
-    (setf (liv-spore liv) spore)
-    (setf (field-value :tile spore) (ecase (liv-art liv)
-                                      (0 (if plague "spore-plague-0" "spore-0"))
-                                      (1 (if plague "spore-plague-1" "spore-1"))
-                                      (2 (if plague "spore-plague-2" "spore-2"))))
-
-    (assert (not (aref *pop* id)))
+        (plague (get-plague-liv-flag liv))
+        tile)
+    ;(setf (liv-spore liv) spore)
+    (setf tile (ecase (liv-art liv)
+                 (0 (if plague "spore-plague-0" "spore-0"))
+                 (1 (if plague "spore-plague-1" "spore-1"))
+                 (2 (if plague "spore-plague-2" "spore-2"))))
+    (fassert (not (aref *pop* id)) "id=~a *pop*[id]=~a /= nil" id (aref *pop* id))
     (setf (aref *pop* id) liv)
-    (setf (field-value :id spore) id)
     (set-obj x y id)
-    [drop-cell *room* spore y x :exclusive t :probe t]))
+    (push (list id tile liv x y) *drop-spore-request-0*)
+    (when (not *drop-spore-request-1*)
+      (setf *drop-spore-request-1* *drop-spore-request-0*)
+      (setf *drop-spore-request-0* nil))))
 
 (defun breed (liv liv2)
   (when (= (liv-art liv) (liv-art liv2))
@@ -193,8 +216,11 @@
                 (return-from breed)))))))))
 
 (defun die-liv (liv i)
-  (let ((spore (liv-spore liv)))
-    [die spore])
+  (loop while (not (liv-spore liv)) do (yield) (sleep 0.001))
+  (push liv *die-spore-request-0*)
+  (when (not *die-spore-request-1*)
+    (setf *die-spore-request-1* *die-spore-request-0*)
+    (setf *die-spore-request-0* nil))
   (set-obj (liv-x liv) (liv-y liv) 0)
   (setf (aref *pop* i) nil))
 
@@ -259,6 +285,11 @@
         ;(format t "move: ~a:~a ~a,~a -> ~a,~a~%" i objid x y nx ny)
         (setf (liv-x liv) nx
               (liv-y liv) ny)
+        (loop while (not (liv-spore liv)) do (yield) (sleep 0.001))
+        (push (list (liv-spore liv) nx ny) *move-spore-request-0*)
+        (when (not *move-spore-request-1*)
+          (setf *move-spore-request-1* *move-spore-request-0*)
+          (setf *move-spore-request-0* nil))
         (verify-pop-obj-integrity)))))
 
 (defun run-world ()
@@ -284,7 +315,20 @@
           (if (get-plague-liv-flag liv) (incf plague))
           (if (> (liv-gen liv) maxgen) (setf maxgen (liv-gen liv)))
           (run-liv liv i))))
-    (format t "stats: size=~a maxgen=~a plague=~a~%" pops maxgen plague)))
+    (format t "stats: size=~a maxgen=~a plague=~a~%" pops maxgen plague))
+  ; handle create spore requests
+  (let ((lst *create-spore-request*) n)
+    (setf *create-spore-request* nil)
+    (loop for (nx ny) in lst do
+      (setf n nil)
+      (when (= (get-obj nx ny) 0)
+        (loop for i from 1 below (length *pop*) do
+          (when (not (aref *pop* i))
+            (setf n i)
+            (return)))
+        (when n
+          ;(format t "handle-spawn-request~%")
+          (spawn n (make-liv nx ny)))))))
 
 (defun run-liv-thread ()
   (when *run-world*
@@ -294,11 +338,7 @@
   (run-liv-thread))
 
 (define-method run spore ()
-  (let* ((id (field-value :id self))
-         (liv (if id (aref *pop* id))))
-    (if (not liv)
-      [die self]
-      [move-cell *world* self (liv-y liv) (liv-x liv)])))
+  )
 
 (define-method hit spore ()
   ;[die self]
@@ -420,7 +460,7 @@
     ((when (= (random 16) 0) ; how often to spawn a spore
        (let ((x (field-value :column self))
              (y (field-value :row self))
-             nx ny n)
+             nx ny)
          (case (random 4)
            (0 (setf nx (1+ x)) (setf ny y))
            (1 (setf ny (1+ y)) (setf nx x))
@@ -430,13 +470,7 @@
          (if (< ny 0) (setf ny 0))
          (if (>= nx *room-mx*) (setf nx (1- *room-mx*)))
          (if (>= ny *room-my*) (setf ny (1- *room-my*)))
-         (when (= (get-obj nx ny) 0)
-                 ;(not [category-at-p *world* ny nx '(:obstacle)])
-           (loop for i from 1 below (length *pop*) do
-             (when (not (aref *pop* i))
-               (setf n i)
-               (return)))
-           (if n (spawn n (make-liv nx ny))))))))
+         (push (list nx ny) *create-spore-request*)))))
   (define-box (repel-0 "repel-0")
     ([die self])
     ())
@@ -507,7 +541,24 @@
   (setf *run-world* t) ; a bit baroque/primitive message-passing system
   ; FIX: unmark the below loop to run the threads async, though that might hit thread-unsafe code
   ; Having this loop here runs the threads in sync but not parallel and therefor doesn't benefit from threading.
-  (loop while *run-world* do (sleep 0.001))
+  ;(loop while *run-world* do (sleep 0.001))
+  ;(format t "xe2 handle-requests~%")
+  (loop for (id tile liv x y) in *drop-spore-request-1* do
+    (let ((spore (clone =spore=)))
+      (setf (liv-spore liv) spore)
+      (setf (field-value :id spore) id)
+      (setf (field-value :tile spore) tile)
+      [drop-cell *room* spore y x :exclusive t :probe t]))
+  (setf *drop-spore-request-1* nil)
+  ;(format t "xe2 2~%")
+  (loop for liv in *die-spore-request-1* do
+    [die (liv-spore liv)])
+  (setf *die-spore-request-1* nil)
+  ;(format t "xe2 3~%")
+  (loop for (spore nx ny) in *move-spore-request-1* do
+    [move-cell *world* spore ny nx])
+  (setf *move-spore-request-1* nil)
+  ;(format t "xe2 done handle-requests~%")
   (setf *clock* (get-internal-real-time))
   (let ((tile (field-value :tile self))
         (repel (field-value :repel self))
