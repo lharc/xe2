@@ -22,7 +22,7 @@
 (defvar *pop* (make-array 256 :initial-element nil))
 (defvar *obj* (make-array (* *room-mx* *room-my*) :element-type 'fixnum :initial-element 0))
 
-(defmacro make-liv (x y) `(list ,x ,y (make-net) 100 (random 3) 0))
+(defmacro make-liv (x y) `(list ,x ,y (make-net) 100 (random 3) 0 0 0))
 (defmacro liv-x  (liv) `(first  ,liv))
 (defmacro liv-y  (liv) `(second ,liv))
 (defmacro liv-net (liv) `(third  ,liv))
@@ -30,6 +30,8 @@
 (defmacro liv-art    (liv) `(fifth  ,liv))
 (defmacro get-plague-liv-flag (liv) `(not (zerop (logand (sixth ,liv) 1))))
 (defmacro set-plague-liv-flag (liv) `(setf (sixth ,liv) (logior (sixth ,liv) 1)))
+(defmacro liv-age (liv) `(nth 6 ,liv))
+(defmacro liv-gen (liv) `(nth 7 ,liv))
 (defmacro set-obj (x y i) `(setf (aref *obj* (+ ,x (* ,y *room-mx*))) ,i))
 (defmacro get-obj (x y) `(aref *obj* (+ ,x (* ,y *room-mx*))))
 
@@ -183,9 +185,9 @@
                 (if (or (get-plague-liv-flag liv) (get-plague-liv-flag liv2))
                   (set-plague-liv-flag liv3))
                 (spawn n liv3)
+                (setf (liv-gen liv3) (1+ (liv-gen liv)))
                 (verify-pop-obj-integrity)
-                (return-from breed)
-                ))))))))
+                (return-from breed)))))))))
 
 (defun run-liv (liv i)
   (let* ((x (liv-x liv))
@@ -199,6 +201,11 @@
     ;(format t "objid: ~a:~a, xy: ~a,~a~%" i objid x y)
     (assert (> objid 0))
     (assert (= objid i))
+    (incf (liv-age liv))
+    (when (> (liv-age liv) 1000) 
+      (set-obj x y 0)
+      (setf (aref *pop* i) nil)
+      (return-from run-liv))
     (decf (liv-energy liv))
     (if (get-plague-liv-flag liv) (decf (liv-energy liv)))
     (when (< (liv-energy liv) 0)
@@ -248,7 +255,7 @@
         (verify-pop-obj-integrity)))))
 
 (defun run-world ()
-  (format t "**** ~a ****~%" (get-internal-run-time))
+  ;(format t "**** ~a ****~%" (get-internal-run-time))
   (loop for i from 0 below (length *obj*) do
     (if (= (aref *obj* i) -3)
       (setf (aref *obj* i) 0)))
@@ -258,11 +265,19 @@
     ;(let ((objid (get-obj x y)))
     ;  (fassert (= objid 0) "place ~a,~a is not empty" x y))
     (if (= (get-obj x y) 0) (set-obj x y -3)))
-  (let ((poplen (length *pop*)))
+  (let ((poplen (length *pop*))
+        (pops 0)
+        (plague 0)
+        (maxgen 0))
     (verify-pop-obj-integrity)
     (loop for i from 1 below poplen do
       (let ((liv (aref *pop* i)))
-        (if liv (run-liv liv i))))))
+        (when liv 
+          (incf pops)
+          (if (get-plague-liv-flag liv) (incf plague))
+          (if (> (liv-gen liv) maxgen) (setf maxgen (liv-gen liv)))
+          (run-liv liv i))))
+    (format t "stats: size=~a maxgen=~a plague=~a~%" pops maxgen plague)))
 
 (define-method run spore ()
   (let* ((id (field-value :id self))
