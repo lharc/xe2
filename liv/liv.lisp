@@ -21,8 +21,9 @@
 (defvar *clocktimer* (make-array 16 :initial-element 0))
 (defvar *pop* (make-array 256 :initial-element nil))
 (defvar *obj* (make-array (* *room-mx* *room-my*) :element-type 'fixnum :initial-element 0))
+(defvar *run-world* nil)
 
-(defmacro make-liv (x y) `(list ,x ,y (make-net) 100 (random 3) 0 0 0))
+(defmacro make-liv (x y) `(list ,x ,y (make-net) 100 (random 3) 0 0 0 nil))
 (defmacro liv-x  (liv) `(first  ,liv))
 (defmacro liv-y  (liv) `(second ,liv))
 (defmacro liv-net (liv) `(third  ,liv))
@@ -32,6 +33,7 @@
 (defmacro set-plague-liv-flag (liv) `(setf (sixth ,liv) (logior (sixth ,liv) 1)))
 (defmacro liv-age (liv) `(nth 6 ,liv))
 (defmacro liv-gen (liv) `(nth 7 ,liv))
+(defmacro liv-spore (liv) `(nth 8 ,liv))
 (defmacro set-obj (x y i) `(setf (aref *obj* (+ ,x (* ,y *room-mx*))) ,i))
 (defmacro get-obj (x y) `(aref *obj* (+ ,x (* ,y *room-mx*))))
 
@@ -141,6 +143,7 @@
         (x (liv-x liv))
         (y (liv-y liv))
         (plague (get-plague-liv-flag liv)))
+    (setf (liv-spore liv) spore)
     (setf (field-value :tile spore) (ecase (liv-art liv)
                                       (0 (if plague "spore-plague-0" "spore-0"))
                                       (1 (if plague "spore-plague-1" "spore-1"))
@@ -189,6 +192,12 @@
                 (verify-pop-obj-integrity)
                 (return-from breed)))))))))
 
+(defun die-liv (liv i)
+  (let ((spore (liv-spore liv)))
+    [die spore])
+  (set-obj (liv-x liv) (liv-y liv) 0)
+  (setf (aref *pop* i) nil))
+
 (defun run-liv (liv i)
   (let* ((x (liv-x liv))
          (y (liv-y liv))
@@ -203,14 +212,12 @@
     (assert (= objid i))
     (incf (liv-age liv))
     (when (> (liv-age liv) 1000) 
-      (set-obj x y 0)
-      (setf (aref *pop* i) nil)
+      (die-liv liv i)
       (return-from run-liv))
     (decf (liv-energy liv))
     (if (get-plague-liv-flag liv) (decf (liv-energy liv)))
     (when (< (liv-energy liv) 0)
-      (set-obj x y 0)
-      (setf (aref *pop* i) nil)
+      (die-liv liv i)
       (return-from run-liv))
     ;(format t "nei: ~s~%" nei)
     (destructuring-bind (w e n s) nei
@@ -278,6 +285,13 @@
           (if (> (liv-gen liv) maxgen) (setf maxgen (liv-gen liv)))
           (run-liv liv i))))
     (format t "stats: size=~a maxgen=~a plague=~a~%" pops maxgen plague)))
+
+(defun run-liv-thread ()
+  (when *run-world*
+    (run-world)
+    (setf *run-world* nil))
+  (sleep 0.001)
+  (run-liv-thread))
 
 (define-method run spore ()
   (let* ((id (field-value :id self))
@@ -490,7 +504,10 @@
   (quit :shutdown))
 
 (define-method run player ()
-  (run-world)
+  (setf *run-world* t) ; a bit baroque/primitive message-passing system
+  ; FIX: unmark the below loop to run the threads async, though that might hit thread-unsafe code
+  ; Having this loop here runs the threads in sync but not parallel and therefor doesn't benefit from threading.
+  (loop while *run-world* do (sleep 0.001))
   (setf *clock* (get-internal-real-time))
   (let ((tile (field-value :tile self))
         (repel (field-value :repel self))
@@ -551,6 +568,7 @@
           (format t "set-obj: objid=~a~%" i)
           (set-obj x y i)
           (setf (aref *pop* i) liv)
+          (setf (liv-spore liv) spore)
           (setf (field-value :tile spore) (ecase art
                                             (0 "spore-0")
                                             (1 "spore-1")
@@ -719,6 +737,7 @@
 (defun init-liv ()
   (message "Initializing Liv...")
   (initialize)
+  (sb-thread:make-thread 'run-liv-thread)
   (set-screen-height *room-window-height*)
   (set-screen-width *room-window-width*)
   (let* ((prompt (clone =room-prompt=))
