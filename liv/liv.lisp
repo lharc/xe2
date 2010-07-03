@@ -32,7 +32,7 @@
 (defvar *move-spore-request-0* nil)
 (defvar *move-spore-request-1* nil)
 
-(defmacro make-liv (x y) `(list ,x ,y (make-net) 100 (random 3) 0 0 0 nil))
+(defmacro make-liv (x y) `(list ,x ,y (make-net) 100 (random 3) 0 0 0 nil 0f0))
 (defmacro liv-x  (liv) `(first  ,liv))
 (defmacro liv-y  (liv) `(second ,liv))
 (defmacro liv-net (liv) `(third  ,liv))
@@ -43,6 +43,7 @@
 (defmacro liv-age (liv) `(nth 6 ,liv))
 (defmacro liv-gen (liv) `(nth 7 ,liv))
 (defmacro liv-spore (liv) `(nth 8 ,liv))
+(defmacro liv-annerror (liv) `(nth 9 ,liv))
 (defmacro set-obj (x y i) `(setf (aref *obj* (+ ,x (* ,y *room-mx*))) ,i))
 (defmacro get-obj (x y) `(aref *obj* (+ ,x (* ,y *room-mx*))))
 
@@ -80,18 +81,19 @@
               (fassert (= n (+ x (* y *room-mx*))) "n=~a, x=~a, y=~a (~a) objid=~a" n x y (+ x (* y *room-mx*)) objid))))))
     (fassert (= cnta cntb) "cnta=~a /= cntb=~a" cnta cntb)))
 
+(define-symbol-macro annsize 82)
 (defun make-net ()
-  (let ((wo (make-array 72 :element-type 'single-float)))
-    (loop for i from 0 below 72 do
+  (let ((wo (make-array annsize :element-type 'single-float)))
+    (loop for i from 0 below annsize do
       (setf (aref wo i) (* 0.9 (- (/ (random (* 2 8192)) 8192) 1f0))))
     wo))
 
 (defun copy-net-random (dst src1 src2)
-  (loop for i from 0 below 72 do
+  (loop for i from 0 below annsize do
     (let ((f (case (random 2)
                (0 (aref src1 i))
                (1 (aref src2 i)))))
-      (setf f (+ f (* 0.1 (- (/ (random 8192) 8192) 0.5))))
+      (incf f (* 0.1 (- (/ (random 8192) 8192) 0.5)))
       (setf (aref dst i) f))))
 
 (defun run-net (net i0 i1 i2 i3)
@@ -101,33 +103,43 @@
              (a* (i j)
                `(* (aref net ,i) (aref net ,j)))
              (nl (i)
-               `(coerce (/ 1 (1+ (exp (- (aref net ,i))))) 'single-float)))
+               `(coerce (/ (1+ (tanh (* 4 (aref net ,i)))) 2) 'single-float)))
     ; layer 1
-    (setf (anet  4) (+ 1f0 (* i0 (anet 36)) (* i1 (anet 43)) (* i2 (anet 50)) (* i3 (anet 57)) (* (anet 0) (anet 58)) (* (anet 1) (anet 59))))
-    (setf (anet  9) (+ 1f0 (* i0 (anet  5)) (* i1 (anet  6)) (* i2 (anet  7)) (* i3 (anet  8)) (* (anet 0) (anet 60)) (* (anet 1) (anet 61))))
-    (setf (anet 14) (+ 1f0 (* i0 (anet 10)) (* i1 (anet 11)) (* i2 (anet 12)) (* i3 (anet 13)) (* (anet 0) (anet 62)) (* (anet 1) (anet 63))))
-    (setf (anet 19) (+ 1f0 (* i0 (anet 15)) (* i1 (anet 16)) (* i2 (anet 17)) (* i3 (anet 18)) (* (anet 2) (anet 64)) (* (anet 3) (anet 65))))
-    (setf (anet 24) (+ 1f0 (* i0 (anet 20)) (* i1 (anet 21)) (* i2 (anet 22)) (* i3 (anet 23)) (* (anet 2) (anet 66)) (* (anet 3) (anet 67))))
-    (setf (anet 29) (+ 1f0 (* i0 (anet 25)) (* i1 (anet 26)) (* i2 (anet 27)) (* i3 (anet 28)) (* (anet 2) (anet 68)) (* (anet 3) (anet 69))))
-    (setf (anet  4) (nl  4))
-    (setf (anet  9) (nl  9))
-    (setf (anet 14) (nl 14))
-    (setf (anet 19) (nl 19))
-    (setf (anet 24) (nl 24))
-    (setf (anet 29) (nl 29))
+    (loop for i from 0 below 6 do
+      (let ((n (+ i 6 (* i 5))))
+        ;(format t "neuron: ~a b=~a w0=~a w1=~a w2=~a w3=~a  ~%" n
+        ;        (+ n 1)
+        ;        (+ n 2)
+        ;        (+ n 3)
+        ;        (+ n 4)
+        ;        (+ n 5))
+        (setf (anet n) (+ (anet       (+ n 1))
+                          (* i0 (anet (+ n 2)))
+                          (* i1 (anet (+ n 3)))
+                          (* i2 (anet (+ n 4)))
+                          (* i3 (anet (+ n 5)))
+                          ))
+        (setf (anet n) (nl n))))
     ; layer 2
-    (setf (anet 0) (+ 1f0 (a* 4 30) (a* 9 31) (a* 14 32) (a* 19 33) (a* 24 34) (a* 29 35)))
-    (setf (anet 1) (+ 1f0 (a* 4 37) (a* 9 38) (a* 14 39) (a* 19 40) (a* 24 41) (a* 29 42)))
-    (setf (anet 2) (+ 1f0 (a* 4 44) (a* 9 45) (a* 14 46) (a* 19 47) (a* 24 48) (a* 29 49)))
-    (setf (anet 3 ) (+ 1f0 (a* 4 51) (a* 9 52) (a* 14 53) (a* 19 54) (a* 24 55) (a* 29 56)))
-
-    (setf (anet 0) (nl 0))
-    (setf (anet 1) (nl 1))
-    (setf (anet 2) (nl 2))
-    (setf (anet 3) (nl 3))
-
-    ;(format t "~,2f ~,2f ~,2f ~,2f  :  ~,2f ~,2f ~,2f ~,2f~%" (anet 4) (anet 9) (anet 14) (anet 19) (anet 24) (anet 29) (anet 34) (anet 39))
-  ))
+    (loop for i from 0 below 6 do
+      (let ((n (+ -3 i (* (+ i 7) 6))))
+        ;(format t "output-neuron: ~a~%"
+        ;        `(setf (anet ,i) (+ (anet ,(+ n 1)) (a* 4  ,(+ n 2))
+        ;                                            (a* 9  ,(+ n 3))
+        ;                                            (a* 14 ,(+ n 4))
+        ;                                            (a* 19 ,(+ n 5))
+        ;                                            (a* 24 ,(+ n 6))
+        ;                                            (a* 29 ,(+ n 7)))))
+        (setf (anet i) (+ (anet  (+ n 1))
+                          (a* 4  (+ n 2))
+                          (a* 10 (+ n 3))
+                          (a* 16 (+ n 4))
+                          (a* 22 (+ n 5))
+                          (a* 28 (+ n 6))
+                          (a* 34 (+ n 7))))
+        (setf (anet n) (nl n)))))
+  ;(sb-ext:quit)
+  )
 
 (defmacro check-timer ((pos elapse) &body body)
   (let ((pos (if (numberp pos) `(aref *clocktimer* ,pos) pos)))
@@ -249,7 +261,7 @@
       (return-from run-liv))
     ;(format t "nei: ~s~%" nei)
     (destructuring-bind (w e n s) nei
-      (let ((eb 0f0) (rb 0f0) (ee 0f0) (fe 0f0))
+      (let ((eb 0f0) (rb 0f0) (ee 0f0) (fe 0f0) dn ds dw de)
         (declare (single-float eb rb ee fe))
         ; energy box
         (when (or (= n -2) (= s -2) (= w -2) (= e -2))
@@ -262,9 +274,14 @@
         (if (> n 0) (if (= (liv-art (aref *pop* n)) art) (incf fe) (incf ee)))
         (if (> s 0) (if (= (liv-art (aref *pop* s)) art) (incf fe) (incf ee)))
         (run-net net eb rb ee fe)
-        (setf nx -1) (setf ny -1)
-        (if (> (aref net 0)  0.7) (setf nx 1))
-        (if (< (aref net 1)  0.7) (setf ny 1))
+        (if (> (aref net 0) 0.7) (setf dn t))
+        (if (> (aref net 1) 0.7) (setf ds t))
+        (if (> (aref net 2) 0.7) (setf dw t))
+        (if (> (aref net 3) 0.7) (setf de t))
+        (if (and dn (not ds) (not dw) (not de)) (setf ny -1))
+        (if (and ds (not dn) (not dw) (not de)) (setf ny  1))
+        (if (and dw (not dn) (not ds) (not de)) (setf nx -1))
+        (if (and de (not dn) (not ds) (not dw)) (setf nx  1))
         (when (> (aref net 2) 0.7)
           (when (> w 0) (transfer-energy liv (aref *pop* w)))
           (when (> e 0) (transfer-energy liv (aref *pop* e)))
@@ -459,7 +476,7 @@
   (define-box (generator-0 "generator-0" :categories (:obstacle))
     ((format t "hit-spore-generator!~%")
      [die self])
-    ((when (= (random 16) 0) ; how often to spawn a spore
+    ((when (= (random 2) 0) ; how often to spawn a spore
        (let ((x (field-value :column self))
              (y (field-value :row self))
              nx ny)
@@ -662,11 +679,16 @@
                   (when [drop-cell self (clone =wall-edible=) y x])))
               c0 r0 c1 r1))
 
-(define-method drop-generator room (x y)
+(define-method drop-hqbase room (x y art)
+  (set-obj x y -1)
+  ; FIX: remove any objstacles (but not floor) under base
+  ;(when [obstacle-at-p *world* y x]
+  ;  [die-location y x]
   (let ((gen (clone =generator-0=)))
     [drop-cell self gen y x]))
 
-(define-method drop-repelant room (x y)
+(define-method drop-mine room (x y)
+  (set-obj x y -2)
   (let ((gen (clone =repel-0=)))
     (setf (field-value :tile gen) (nth (random 3) '("repel-0" "repel-1" "repel-2")))
     [drop-cell self gen y x]))
@@ -706,20 +728,16 @@
 ;      (destructuring-bind (r c)
 ;        (midpoint (list row column) (list (+ row len) column))
 ;        [drop-edible-wall self r c r (+ column len)])))
-  ; create spore-generators
-  (dotimes (i 20)
-    (let ((x (1+ (random *room-mx*)))
-          (y (1+ (random *room-my*))))
-      (when (not [obstacle-at-p *world* y x])
-        (set-obj x y -1)
-        [drop-generator self x y])))
-  ; create some repelants
-  (dotimes (i 10)
-    (let ((x (1+ (random *room-mx*)))
-          (y (1+ (random *room-my*))))
-      (when (not [obstacle-at-p *world* y x])
-        (set-obj x y -2)
-        [drop-repelant self x y])))
+  ; create headquarters
+  [drop-hqbase self  4 4 :red]
+  [drop-hqbase self 34 4 :green]
+  [drop-hqbase self 20 20 :blue]
+  ; create some mines
+  (loop for x from 12 below 24 do
+    (loop for y from 10 below 16 do
+      (when (= (random 4) 0)
+        (when (not [obstacle-at-p *world* y x])
+          [drop-mine self x y]))))
   ; create player
   [drop-cell self (clone =drop-point=)
              2 2 :exclusive t :probe t])
