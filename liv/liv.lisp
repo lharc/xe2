@@ -25,12 +25,8 @@
 ; one-way lockless communication channels
 ; FIX: create some macros and move out this functionally
 (defvar *create-spore-request* nil) ; create request isn't critical, ie lossy is fine
-(defvar *drop-spore-request-0* nil)
-(defvar *drop-spore-request-1* nil)
-(defvar *die-spore-request-0* nil)
-(defvar *die-spore-request-1* nil)
-(defvar *move-spore-request-0* nil)
-(defvar *move-spore-request-1* nil)
+(defvar *xe2-mbox* nil)
+(defvar *xe2-mbox-1* nil)
 
 (defmacro make-liv (x y) `(list ,x ,y (make-net) 100 (random 3) 0 0 0 nil 0f0))
 (defmacro liv-x  (liv) `(first  ,liv))
@@ -161,17 +157,14 @@
       (incf (liv-energy liv) am)
       (decf (liv-energy liv2) (ash am 2)))))
 
-(defun yield ()
-  (when (not *drop-spore-request-1*)
-    (setf *drop-spore-request-1* *drop-spore-request-0*)
-    (setf *drop-spore-request-0* nil))
-  (when (not *move-spore-request-1*)
-    (setf *move-spore-request-1* *move-spore-request-0*)
-    (setf *move-spore-request-0* nil))
-  (when (not *die-spore-request-1*)
-    (setf *die-spore-request-1* *die-spore-request-0*)
-    (setf *die-spore-request-0* nil))
-  )
+(defun yield-xe2mbox ()
+  (when (not *xe2-mbox-1*)
+    (setf *xe2-mbox-1* *xe2-mbox*)
+    (setf *xe2-mbox* nil)))
+
+(defun send-xe2mbox (msg)
+  (push msg *xe2-mbox*)
+  (yield-xe2mbox))
 
 (defun spawn (id liv)
   (let (;(spore (clone =spore=))
@@ -187,10 +180,7 @@
     (fassert (not (aref *pop* id)) "id=~a *pop*[id]=~a /= nil" id (aref *pop* id))
     (setf (aref *pop* id) liv)
     (set-obj x y id)
-    (push (list id tile liv x y) *drop-spore-request-0*)
-    (when (not *drop-spore-request-1*)
-      (setf *drop-spore-request-1* *drop-spore-request-0*)
-      (setf *drop-spore-request-0* nil))))
+    (send-xe2mbox (list :drop-spore id tile liv x y))))
 
 (defun breed (liv liv2)
   (when (= (liv-art liv) (liv-art liv2))
@@ -230,11 +220,8 @@
                 (return-from breed)))))))))
 
 (defun die-liv (liv i)
-  (loop while (not (liv-spore liv)) do (yield) (sleep 0.001))
-  (push liv *die-spore-request-0*)
-  (when (not *die-spore-request-1*)
-    (setf *die-spore-request-1* *die-spore-request-0*)
-    (setf *die-spore-request-0* nil))
+  (loop while (not (liv-spore liv)) do (yield-xe2mbox) (sleep 0.001))
+  (send-xe2mbox (list :die-spore liv))
   (set-obj (liv-x liv) (liv-y liv) 0)
   (setf (aref *pop* i) nil))
 
@@ -304,11 +291,8 @@
         ;(format t "move: ~a:~a ~a,~a -> ~a,~a~%" i objid x y nx ny)
         (setf (liv-x liv) nx
               (liv-y liv) ny)
-        (loop while (not (liv-spore liv)) do (yield) (sleep 0.001))
-        (push (list (liv-spore liv) nx ny) *move-spore-request-0*)
-        (when (not *move-spore-request-1*)
-          (setf *move-spore-request-1* *move-spore-request-0*)
-          (setf *move-spore-request-0* nil))
+        (loop while (not (liv-spore liv)) do (yield-xe2mbox) (sleep 0.001))
+        (send-xe2mbox (list :move-spore (liv-spore liv) nx ny))
         (verify-pop-obj-integrity)))))
 
 (defun run-world ()
@@ -562,22 +546,23 @@
   ; Having this loop here runs the threads in sync but not parallel and therefor doesn't benefit from threading.
   ;(loop while *run-world* do (sleep 0.001))
   ;(format t "xe2 handle-requests~%")
-  (loop for (id tile liv x y) in *drop-spore-request-1* do
-    (let ((spore (clone =spore=)))
-      (setf (liv-spore liv) spore)
-      (setf (field-value :id spore) id)
-      (setf (field-value :tile spore) tile)
-      [drop-cell *room* spore y x :exclusive t :probe t]))
-  (setf *drop-spore-request-1* nil)
-  ;(format t "xe2 2~%")
-  (loop for liv in *die-spore-request-1* do
-    [die (liv-spore liv)])
-  (setf *die-spore-request-1* nil)
-  ;(format t "xe2 3~%")
-  (loop for (spore nx ny) in *move-spore-request-1* do
-    [move-cell *world* spore ny nx])
-  (setf *move-spore-request-1* nil)
-  ;(format t "xe2 done handle-requests~%")
+  (loop for msg in *xe2-mbox-1* do
+    (let ((name (car msg)))
+      (ecase name
+        (:drop-spore
+          (destructuring-bind (id tile liv x y) (cdr msg)
+            (let ((spore (clone =spore=)))
+              (setf (liv-spore liv) spore)
+              (setf (field-value :id spore) id)
+              (setf (field-value :tile spore) tile)
+              [drop-cell *room* spore y x :exclusive t :probe t])))
+        (:die-spore
+          (destructuring-bind (liv) (cdr msg)
+            [die (liv-spore liv)]))
+        (:move-spore
+          (destructuring-bind (spore nx ny) (cdr msg)
+            [move-cell *world* spore ny nx])))))
+  (setf *xe2-mbox-1* nil)
   (setf *clock* (get-internal-real-time))
   (let ((tile (field-value :tile self))
         (repel (field-value :repel self))
